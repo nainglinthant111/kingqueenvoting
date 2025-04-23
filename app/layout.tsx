@@ -10,6 +10,9 @@ export const metadata: Metadata = {
     title: "King & Queen Voting App",
     description: "Vote for your favorite king and queen candidates",
     generator: "Next.js",
+    icons: {
+        icon: "/icons/logo.jpeg", // This is your favicon
+    },
 };
 
 export default function RootLayout({
