@@ -1,0 +1,149 @@
+-- Create enum types
+CREATE TYPE user_role AS ENUM ('user', 'admin', 'moderator');
+CREATE TYPE candidate_category AS ENUM ('king', 'queen');
+CREATE TYPE candidate_status AS ENUM ('pending', 'active', 'rejected');
+
+-- Create Users table
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    department VARCHAR(255),
+    student_id VARCHAR(50),
+    profile_image VARCHAR(255),
+    role user_role NOT NULL DEFAULT 'user',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    email_notifications BOOLEAN NOT NULL DEFAULT TRUE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+-- Create Elections table
+CREATE TABLE elections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    start_date TIMESTAMP NOT NULL,
+    end_date TIMESTAMP NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    show_results BOOLEAN NOT NULL DEFAULT FALSE,
+    allow_multiple_votes BOOLEAN NOT NULL DEFAULT FALSE,
+    allow_new_candidates BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Ensure end_date is after start_date
+    CONSTRAINT valid_election_dates CHECK (end_date > start_date)
+);
+
+-- Create Candidates table
+CREATE TABLE candidates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    election_id UUID NOT NULL REFERENCES elections(id) ON DELETE CASCADE,
+    category candidate_category NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    department VARCHAR(255),
+    bio TEXT,
+    image VARCHAR(255),
+    status candidate_status NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create Votes table
+CREATE TABLE votes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    candidate_id UUID NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+    election_id UUID NOT NULL REFERENCES elections(id) ON DELETE CASCADE,
+    voted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    
+    -- Ensure a user can only have one active vote per category per election
+    CONSTRAINT unique_user_vote UNIQUE (user_id, election_id, (SELECT category FROM candidates WHERE id = candidate_id))
+);
+
+-- Create indexes for performance
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_candidates_election ON candidates(election_id, category);
+CREATE INDEX idx_candidates_status ON candidates(status);
+CREATE INDEX idx_votes_user_election ON votes(user_id, election_id);
+CREATE INDEX idx_votes_candidate ON votes(candidate_id);
+CREATE INDEX idx_elections_active ON elections(is_active);
+
+-- Create function to update timestamps
+CREATE OR REPLACE FUNCTION update_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create triggers to automatically update timestamps
+CREATE TRIGGER update_users_timestamp
+BEFORE UPDATE ON users
+FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_candidates_timestamp
+BEFORE UPDATE ON candidates
+FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_elections_timestamp
+BEFORE UPDATE ON elections
+FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+
+SELECT * FROM elections 
+WHERE is_active = TRUE 
+AND start_date <= CURRENT_TIMESTAMP 
+AND end_date >= CURRENT_TIMESTAMP;
+
+SELECT c.*, COUNT(v.id) AS vote_count
+FROM candidates c
+LEFT JOIN votes v ON c.id = v.candidate_id AND v.is_active = TRUE
+WHERE c.election_id = '12345678-1234-1234-1234-123456789012'
+AND c.category = 'king'
+AND c.status = 'active'
+GROUP BY c.id
+ORDER BY vote_count DESC;
+
+SELECT EXISTS (
+    SELECT 1 FROM votes v
+    JOIN candidates c ON v.candidate_id = c.id
+    WHERE v.user_id = '12345678-1234-1234-1234-123456789012'
+    AND v.election_id = '12345678-1234-1234-1234-123456789012'
+    AND c.category = 'king'
+    AND v.is_active = TRUE
+) AS has_voted;
+
+
+-- First, deactivate any existing votes in this category
+UPDATE votes
+SET is_active = FALSE
+FROM candidates
+WHERE votes.candidate_id = candidates.id
+AND votes.user_id = '12345678-1234-1234-1234-123456789012'
+AND votes.election_id = '12345678-1234-1234-1234-123456789012'
+AND candidates.category = 'king';
+
+-- Then insert the new vote
+INSERT INTO votes (user_id, candidate_id, election_id)
+VALUES ('12345678-1234-1234-1234-123456789012', '12345678-1234-1234-1234-123456789012', '12345678-1234-1234-1234-123456789012');
+
+SELECT 
+    c.id,
+    c.name,
+    c.department,
+    c.category,
+    COUNT(v.id) AS vote_count
+FROM candidates c
+LEFT JOIN votes v ON c.id = v.candidate_id AND v.is_active = TRUE
+WHERE c.election_id = '12345678-1234-1234-1234-123456789012'
+AND c.status = 'active'
+GROUP BY c.id, c.category
+ORDER BY c.category, vote_count DESC;
+
+
